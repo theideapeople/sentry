@@ -15,6 +15,10 @@ Autoloader::namespaces(array(
     'Sentry' => Bundle::path('sentry'),
 ));
 
+Autoloader::map(array(
+	'Sentry\\SentryException' => __DIR__.DS.'/sentry'.EXT,
+));
+
 // Set the global alias for Sentry
 Autoloader::alias('Sentry\\Sentry', 'Sentry');
 
