@@ -160,40 +160,44 @@ class Sentry extends \Laravel\Auth\Drivers\Driver
 		}
 
 		// if user is validated
-		if ($user = $this->validate_user($arguments[$login_column], $arguments['password'], 'password'))
+		try
 		{
-			if ($suspend)
-			{
-				// clear attempts for login since they got in
-				$attempts->clear();
-			}
-
-			// set update array
-			$update = array();
-
-			// if there is a password reset hash and user logs in - remove the password reset
-			if ($user->get('password_reset_hash'))
-			{
-				$update['password_reset_hash'] = '';
-				$update['temp_password'] = '';
-			}
-
-			$update['last_login'] = time();
-			$update['ip_address'] = Request::ip();
-
-			// update user
-			if (count($update))
-			{
-				$user->update($update, false);
-			}
-
-			// set session vars
-			$this->login((int) $user->get('id'), array_get($arguments, 'remember'));
-
-			return true;
+			$user = $this->validate_user($arguments[$login_column], $arguments['password'], 'password');
+		}
+		catch (\Exception $e)
+		{
+			return false;
 		}
 
-		return false;
+		if ($suspend)
+		{
+			// clear attempts for login since they got in
+			$attempts->clear();
+		}
+
+		// set update array
+		$update = array();
+
+		// if there is a password reset hash and user logs in - remove the password reset
+		if ($user->get('password_reset_hash'))
+		{
+			$update['password_reset_hash'] = '';
+			$update['temp_password'] = '';
+		}
+
+		$update['last_login'] = time();
+		$update['ip_address'] = Request::ip();
+
+		// update user
+		if (count($update))
+		{
+			$user->update($update, false);
+		}
+
+		// set session vars
+		$this->login((int) $user->get('id'), array_get($arguments, 'remember'));
+
+		return true;
 	}
 
 	/**
@@ -460,7 +464,7 @@ class Sentry extends \Laravel\Auth\Drivers\Driver
 		// check password
 		if ( ! $user->check_password($password, $field))
 		{
-			if ($this->$suspend and ($field == 'password' or $field == 'password_reset_hash'))
+			if (Config::get('auth.sentry.suspend') and ($field == 'password' or $field == 'password_reset_hash'))
 			{
 				$this->attempts($login_column_value, Request::ip())->add();
 			}
