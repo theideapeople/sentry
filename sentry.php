@@ -26,106 +26,53 @@ class SentryConfigException extends SentryException {}
 /**
  * Sentry Auth class
  */
-class Sentry
+class Sentry extends \Laravel\Auth\Drivers\Driver
 {
-
-	/**
-	 * @var  string  Database instance
-	 */
-	 protected static $db_instance = null;
-
-	/**
-	 * @var  string  Holds the column to use for login
-	 */
-	protected static $login_column = null;
-
-	/**
-	 * @var  bool  Whether suspension feature should be used or not
-	 */
-	protected static $suspend = null;
 
 	/**
 	 * @var  Sentry_Attempts  Holds the Sentry_Attempts object
 	 */
-	protected static $attempts = null;
-
-	/**
-	 * @var  object  Caches the current logged in user object
-	 */
-	protected static $current_user = null;
+	protected $attempts = null;
 
 	/**
 	 * @var  array  Caches all users accessed
 	 */
-	protected static $user_cache = array();
+	protected $user_cache = array();
 
 	/**
-	 * Prevent instantiation
-	 */
-	final private function __construct() {}
-
-	/**
-	 * Run when class is loaded
-	 *
-	 * @return  void
-	 */
-	public static function _init()
-	{
-		// set static vars for later use
-		static::$login_column = trim(Config::get('sentry::sentry.login_column'));
-		static::$suspend = trim(Config::get('sentry::sentry.limit.enabled'));
-		$db_instance = trim(Config::get('sentry::sentry.db_instance'));
-
-		// db_instance check
-		if ( ! empty($db_instance) )
-		{
-			static::$db_instance = $db_instance;
-		}
-
-		// login_column check
-		if (empty(static::$login_column))
-		{
-			throw new SentryConfigException(__('sentry::sentry.login_column_empty'));
-		}
-
-	}
-
-	/**
-	 * Get's either the currently logged in user or the specified user by id or Login
+	 * Gets either the currently logged in user or the specified user by id or Login
 	 * Column value.
 	 *
 	 * @param   int|string  User id or Login Column value to find.
 	 * @throws  SentryException
 	 * @return  Sentry_User
 	 */
-	public static function user($id = null, $recache = false)
+	public function retrieve($id = null, $recache = false)
 	{
-		if ($id === null and $recache === false and static::$current_user !== null)
+		if ($id === null and $recache === false and $this->user !== null)
 		{
-			return static::$current_user;
+			return $this->user;
 		}
-		elseif ($id !== null and $recache === false and isset(static::$user_cache[$id]))
+		elseif ($id !== null and $recache === false and isset($this->user_cache[$id]))
 		{
-			return static::$user_cache[$id];
+			return $this->user_cache[$id];
 		}
 
 		try
 		{
 			if ($id)
 			{
-				static::$user_cache[$id] = new Sentry_User($id);
-				return static::$user_cache[$id];
+				return $this->user_cache[$id] = new Sentry_User($id);
 			}
 			// if session exists - default to user session
-			elseif (static::check())
+			elseif ($this->token)
 			{
-				$user_id = Session::get(Config::get('sentry::sentry.session.user'));
-				static::$current_user = new Sentry_User($user_id);
-				return static::$current_user;
+				return new Sentry_User($this->token);
 			}
 
 			// else return empty user
-			return new Sentry_User();
+			//return new Sentry_User();
+			return null;
 		}
 		catch (SentryUserException $e)
 		{
@@ -140,7 +87,7 @@ class Sentry
 	 * @param   int|string  Group id or or name
 	 * @return  Sentry_User
 	 */
-	public static function group($id = null)
+	public function group($id = null)
 	{
 		if ($id)
 		{
@@ -155,7 +102,7 @@ class Sentry
 	 *
 	 * @return  Sentry_Attempts
 	 */
-	 public static function attempts($login_id = null, $ip_address = null)
+	 public function attempts($login_id = null, $ip_address = null)
 	 {
 	 	return new Sentry_Attempts($login_id, $ip_address);
 	 }
@@ -169,15 +116,28 @@ class Sentry
 	 * @return  bool
 	 * @throws  SentryException
 	 */
-	public static function login($login_column_value, $password, $remember = false)
+	public function attempt($arguments = array(), $password = null, $remember = false)
 	{
+		$login_column = Config::get('auth.username');
+		$suspend = Config::get('auth.sentry.suspend');
+
+		// Leave explicit parameters for backwards compatibility
+		if ( ! is_array($arguments))
+		{
+			$arguments = array(
+				$login_column => $arguments,
+				'password' => $password,
+				'remember' => $remember,
+			);
+		}
+
 		// log the user out if they hit the login page
-		static::logout();
+		$this->logout();
 
 		// get login attempts
-		if (static::$suspend)
+		if ($suspend)
 		{
-			$attempts = static::attempts($login_column_value, Request::ip());
+			$attempts = $this->attempts($arguments['username'], Request::ip());
 
 			// if attempts > limit - suspend the login/ip combo
 			if ($attempts->get() >= $attempts->get_limit())
@@ -194,15 +154,15 @@ class Sentry
 		}
 
 		// make sure vars have values
-		if (empty($login_column_value) or empty($password))
+		if (empty($arguments[$login_column]) or empty($arguments['password']))
 		{
 			return false;
 		}
 
 		// if user is validated
-		if ($user = static::validate_user($login_column_value, $password, 'password'))
+		if ($user = $this->validate_user($arguments[$login_column], $arguments['password'], 'password'))
 		{
-			if (static::$suspend)
+			if ($suspend)
 			{
 				// clear attempts for login since they got in
 				$attempts->clear();
@@ -210,12 +170,6 @@ class Sentry
 
 			// set update array
 			$update = array();
-
-			// if they wish to be remembers, set the cookie and get the hash
-			if ($remember)
-			{
-				$update['remember_me'] = static::remember($login_column_value);
-			}
 
 			// if there is a password reset hash and user logs in - remove the password reset
 			if ($user->get('password_reset_hash'))
@@ -234,8 +188,7 @@ class Sentry
 			}
 
 			// set session vars
-			Session::put(Config::get('sentry::sentry.session.user'), (int) $user->get('id'));
-			Session::put(Config::get('sentry::sentry.session.provider'), 'Sentry');
+			$this->login((int) $user->get('id'), array_get($arguments, 'remember'));
 
 			return true;
 		}
@@ -251,42 +204,30 @@ class Sentry
 	 * @return  bool
 	 * @throws  SentryException
 	 */
-	public static function force_login($id, $provider = 'Sentry-Forced')
+	public function force_login($id, $provider = 'Sentry-Forced')
 	{
 		// check to make sure user exists
-		if ( ! static::user_exists($id))
+		if ( ! $this->user = $this->retrieve($id))
 		{
 			throw new SentryException(__('sentry::sentry.user_not_found'));
 		}
 
-		Session::set(Config::get('sentry::sentry.session.user'), $id);
-		Session::set(Config::get('sentry::sentry.session.provider'), $provider);
+		$this->login($id, $remember = false, $provider);
+
 		return true;
 	}
 
 	/**
-	 * Checks if the current user is logged in.
+	 * Logs the specified user in.
 	 *
-	 * @return  bool
+	 * @param   int   
+	 * @return  void
 	 */
-	public static function check()
+	public function login($token, $remember = false, $provider = 'Sentry')
 	{
-		// get session
-		$user_id = Session::get(Config::get('sentry::sentry.session.user'));
+		parent::login($token, $remember);
 
-		// invalid session values - kill the user session
-		if ($user_id === null or ! is_numeric($user_id))
-		{
-			// if they are not logged in - check for cookie and log them in
-			if (static::is_remembered())
-			{
-				return true;
-			}
-
-			//else log out
-			static::logout();
-			return false;
-		}
+		Session::put(Config::get('sentry::sentry.session.provider'), $provider);
 
 		return true;
 	}
@@ -296,10 +237,9 @@ class Sentry
 	 *
 	 * @return  void
 	 */
-	public static function logout()
+	public function logout()
 	{
-		Cookie::forget(Config::get('sentry::sentry.remember_me.cookie_name'));
-		Session::forget(Config::get('sentry::sentry.session.user'));
+		parent::logout();
 		Session::forget(Config::get('sentry::sentry.session.provider'));
 	}
 
@@ -311,7 +251,7 @@ class Sentry
 	 * @return  bool|array
 	 * @throws  SentryException
 	 */
-	public static function activate_user($login_column_value, $code, $decode = true)
+	public function activate_user($login_column_value, $code, $decode = true)
 	{
 		// decode login column
 		if ($decode)
@@ -326,7 +266,7 @@ class Sentry
 		}
 
 		// if user is validated
-		if ($user = static::validate_user($login_column_value, $code, 'activation_hash'))
+		if ($user = $this->validate_user($login_column_value, $code, 'activation_hash'))
 		{
 			// update pass to temp pass, reset temp pass and hash
 			$user->update(array(
@@ -350,7 +290,7 @@ class Sentry
 	 * @return  bool|array
 	 * @throws  SentryException
 	 */
-	public static function reset_password($login_column_value, $password)
+	public function reset_password($login_column_value, $password)
 	{
 		// make sure a user id is set
 		if (empty($login_column_value) or empty($password))
@@ -359,7 +299,7 @@ class Sentry
 		}
 
 		// check if user exists
-		$user = static::user($login_column_value);
+		$user = $this->retrieve($login_column_value);
 
 		// create a hash for reset_password link
 		$hash = Str::random(24);
@@ -396,7 +336,7 @@ class Sentry
 	 * @return  bool
 	 * @throws  SentryException
 	 */
-	public static function reset_password_confirm($login_column_value, $code, $decode = true)
+	public function reset_password_confirm($login_column_value, $code, $decode = true)
 	{
 		// decode login column
 		if ($decode)
@@ -410,10 +350,10 @@ class Sentry
 			return false;
 		}
 
-		if (static::$suspend)
+		if (Config::get('auth.sentry.suspend'))
 		{
 			// get login attempts
-			$attempts = static::attempts($login_column_value, Request::ip());
+			$attempts = $this->attempts($login_column_value, Request::ip());
 
 			// if attempts > limit - suspend the login/ip combo
 			if ($attempts->get() >= $attempts->get_limit())
@@ -423,7 +363,7 @@ class Sentry
 		}
 
 		// if user is validated
-		if ($user = static::validate_user($login_column_value, $code, 'password_reset_hash'))
+		if ($user = $this->validate_user($login_column_value, $code, 'password_reset_hash'))
 		{
 			// update pass to temp pass, reset temp pass and hash
 			$user->update(array(
@@ -445,7 +385,7 @@ class Sentry
 	 * @param   string|id  Login column value or Id
 	 * @return  bool
 	 */
-	public static function user_exists($login_column_value)
+	public function user_exists($login_column_value)
 	{
 		try
 		{
@@ -471,7 +411,7 @@ class Sentry
 	 * @param   string|int  Group name|Group id
 	 * @return  bool
 	 */
-	public static function group_exists($group)
+	public function group_exists($group)
 	{
 		try
 		{
@@ -492,63 +432,6 @@ class Sentry
 	}
 
 	/**
-	 * Remember User Login
-	 *
-	 * @param int
-	 */
-	protected static function remember($login_column)
-	{
-		// generate random string for cookie password
-		$cookie_pass = Str::random(24);
-
-		// create and encode string
-		$cookie_string = base64_encode($login_column.':'.$cookie_pass);
-
-		// set cookie
-		Cookie::put(
-			Config::get('sentry::sentry.remember_me.cookie_name'),
-			$cookie_string,
-			Config::get('sentry::sentry.remember_me.expire')
-		);
-
-		return $cookie_pass;
-	}
-
-	/**
-	 * Check if remember me is set and valid
-	 */
-	protected static function is_remembered()
-	{
-		$encoded_val = Cookie::get(Config::get('sentry::sentry.remember_me.cookie_name'));
-
-		if ($encoded_val['value'])
-		{
-			$val = base64_decode($encoded_val['value']);
-			list($login_column, $hash) = explode(':', $val);
-
-			// if user is validated
-			if ($user = static::validate_user($login_column, $hash, 'remember_me'))
-			{
-				// update last login
-				$user->update(array(
-					'last_login' => time()
-				));
-
-				// set session vars
-				Session::put(Config::get('sentry::sentry.session.user'), (int) $user->get('id'));
-				Session::put(Config::get('sentry::sentry.session.provider'), 'Sentry');
-
-				return true;
-			}
-
-			static::logout();
-			return false;
-		}
-
-		return false;
-	}
-
-	/**
 	 * Validates a Login and Password.  This takes a password type so it can be
 	 * used to validate password reset hashes as well.
 	 *
@@ -557,10 +440,10 @@ class Sentry
 	 * @param   string  Field name (password type)
 	 * @return  bool|Sentry_User
 	 */
-	protected static function validate_user($login_column_value, $password, $field)
+	protected function validate_user($login_column_value, $password, $field)
 	{
 		// get user
-		$user = static::user($login_column_value);
+		$user = $this->retrieve($login_column_value);
 
 		// check activation status
 		if ($user->activated != 1 and $field != 'activation_hash')
@@ -577,9 +460,9 @@ class Sentry
 		// check password
 		if ( ! $user->check_password($password, $field))
 		{
-			if (static::$suspend and ($field == 'password' or $field == 'password_reset_hash'))
+			if ($this->$suspend and ($field == 'password' or $field == 'password_reset_hash'))
 			{
-				static::attempts($login_column_value, Request::ip())->add();
+				$this->attempts($login_column_value, Request::ip())->add();
 			}
 			return false;
 		}

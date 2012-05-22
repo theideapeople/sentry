@@ -18,4 +18,8 @@ Autoloader::namespaces(array(
 // Set the global alias for Sentry
 Autoloader::alias('Sentry\\Sentry', 'Sentry');
 
-Sentry::_init();
+// Add Sentry as an auth driver
+Auth::extend('sentry', function()
+{
+	return new Sentry;
+});
