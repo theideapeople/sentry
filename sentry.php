@@ -460,7 +460,7 @@ class Sentry extends \Laravel\Auth\Drivers\Driver
 		// check password
 		if ( ! $user->check_password($password, $field))
 		{
-			if ($this->$suspend and ($field == 'password' or $field == 'password_reset_hash'))
+			if (Config::get('auth.sentry.suspend') and ($field == 'password' or $field == 'password_reset_hash'))
 			{
 				$this->attempts($login_column_value, Request::ip())->add();
 			}
