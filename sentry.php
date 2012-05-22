@@ -169,6 +169,11 @@ class Sentry extends \Laravel\Auth\Drivers\Driver
 			return false;
 		}
 
+		if ( ! $user)
+		{
+			return false;
+		}
+
 		if ($suspend)
 		{
 			// clear attempts for login since they got in
