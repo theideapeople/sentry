@@ -112,9 +112,9 @@ class Sentry_User implements \Iterator, \ArrayAccess
 		$this->table = strtolower(Config::get('sentry::sentry.table.users'));
 		$this->table_usergroups = strtolower(Config::get('sentry::sentry.table.users_groups'));
 		$this->table_metadata = strtolower(Config::get('sentry::sentry.table.users_metadata'));
-		$this->login_column = strtolower(Config::get('sentry::sentry.login_column'));
+		$this->login_column = strtolower(Config::get('auth.username'));
 		$this->login_column_str = ucfirst($this->login_column);
-		$db_instance = trim(Config::get('sentry::sentry.db_instance'));
+		$db_instance = trim(Config::get('auth.sentry.db_instance'));
 
 		try
 		{
